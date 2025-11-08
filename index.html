@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Platos Peruanos — Foto (Top‑1/Top‑5)</title>
+  <meta name="theme-color" content="#0b1020"/>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <style>
+    :root { --bg:#0b1020; --fg:#e7ecf3; --muted:#9fb1c2; --card:#121a33; --acc:#6ee7b7; --bad:#ef4444; }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Arial; background:var(--bg); color:var(--fg);}
+    .wrap{max-width:720px; margin:0 auto; padding:16px;}
+    .card{background:var(--card); border-radius:16px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.35); margin:16px 0;}
+    .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+    button{border:0; padding:14px 16px; border-radius:14px; background:#1f2a52; color:var(--fg); font-weight:600; width:100%;}
+    button.primary{background:var(--acc); color:#08210c;}
+    .hint{color:var(--muted); font-size:.95em}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono";}
+    img, canvas{max-width:100%; border-radius:12px;}
+    input[type="file"]{display:none}
+    .file-label{display:block; border:1px dashed #2b3a6b; padding:14px; border-radius:14px; text-align:center; cursor:pointer;}
+    .k{display:flex; justify-content:space-between; padding:10px 12px; background:#0e1631; border-radius:10px; margin-bottom:8px;}
+    .bar{height:10px; background:#233060; border-radius:8px; overflow:hidden; margin-top:6px}
+    .bar>span{display:block; height:100%; background:var(--acc)}
+    .center{display:flex; align-items:center; justify-content:center;}
+    .spinner{width:28px; height:28px; border-radius:50%; border:3px solid #27407e; border-top-color:var(--acc); animation:spin 1s linear infinite; margin-right:10px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .error{color:var(--bad)}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.21.0/dist/tf.min.js"></script>
+  <script>
+    // ======= CONFIGURA ESTAS DOS CONSTANTES CON TUS URLS HTTPS =======
+    const MODEL_URL  = "./model.json";    // todo está en la misma carpeta
+    const LABELS_URL = "./labels.json";
+    const INPUT_SIZE = 224; // tu modelo espera 224x224
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Platos Peruanos — Foto</h1>
+    <p class="hint">Abre en celular. El modelo se carga automáticamente. Luego toma o selecciona una foto para ver <strong>Top‑1</strong> y <strong>Top‑5</strong>.</p>
+
+    <section class="card" id="cardLoading">
+      <div class="center">
+        <div class="spinner"></div>
+        <div>
+          <div id="status"><strong>Cargando modelo (~9 MB)...</strong></div>
+          <div class="hint">Primera vez: puede tardar unos segundos; luego queda cacheado.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="cardPhoto" style="display:none">
+      <div class="row">
+        <label class="file-label">
+          <input id="photo" type="file" accept="image/*" capture="environment" />
+          Tomar/Seleccionar foto
+        </label>
+        <button id="btnPredict" class="primary" disabled>Predecir</button>
+      </div>
+      <img id="preview" alt="preview" />
+      <canvas id="canvas" width="224" height="224" hidden></canvas>
+      <p class="hint">Consejo iOS: se requiere HTTPS. Este flujo usa la cámara nativa (no video en vivo) para simplicidad.</p>
+    </section>
+
+    <section class="card" id="cardResults" style="display:none">
+      <h2>Resultados</h2>
+      <div id="single"></div>
+      <div id="topk"></div>
+    </section>
+
+    <section class="card" id="cardError" style="display:none">
+      <h3 class="error">No se pudo cargar el modelo.</h3>
+      <p class="hint">Verifica las URLs (<span class="mono">MODEL_URL</span> y <span class="mono">LABELS_URL</span>), CORS y que el sitio esté por HTTPS.</p>
+    </section>
+  </div>
+
+<script>
+  let model = null;
+  let labels = [];
+  const $ = (id)=>document.getElementById(id);
+  const statusEl = $("status");
+  const preview = $("preview");
+  const canvas = $("canvas");
+  const ctx = canvas.getContext("2d");
+
+  function show(id, on=true){ $(id).style.display = on ? "" : "none"; }
+
+  async function autoload(){
+    try{
+      statusEl.textContent = "Inicializando backend...";
+      await tf.setBackend("webgl"); await tf.ready();
+
+      statusEl.textContent = "Cargando modelo desde URL...";
+      const t0 = performance.now();
+      model = await tf.loadLayersModel(MODEL_URL, { fromTFHub:false });
+      const t1 = performance.now();
+
+      statusEl.textContent = "Cargando etiquetas...";
+      const res = await fetch(LABELS_URL);
+      labels = await res.json();
+
+      statusEl.textContent = "Warmup...";
+      const dummy = tf.zeros([1, INPUT_SIZE, INPUT_SIZE, 3]);
+      let y = model.predict(dummy); if(Array.isArray(y)) y = y[0];
+      await y.data(); y.dispose(); dummy.dispose();
+
+      const secs = ((t1 - t0)/1000).toFixed(2);
+      statusEl.innerHTML = `Modelo listo ✔ (carga: ${secs}s).`;
+
+      show("cardLoading", false);
+      show("cardPhoto", true);
+      $("btnPredict").disabled = false;
+    } catch(err){
+      console.error(err);
+      show("cardLoading", false);
+      show("cardError", true);
+    }
+  }
+
+  function drawTo224(img){
+    const size = INPUT_SIZE;
+    canvas.width = size; canvas.height = size;
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    const side = Math.min(w,h);
+    const sx = (w - side)/2, sy = (h - side)/2;
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+  }
+
+  async function predict(){
+    if(!model){ return; }
+    if(!preview.src){ alert("Primero selecciona o toma una foto"); return; }
+    drawTo224(preview);
+    const input = tf.tidy(()=> tf.browser.fromPixels(canvas).expandDims(0) );
+    // No normalizamos aquí: tu grafo ya incluye rescaling a [-1,1].
+    let y = model.predict(input);
+    if(Array.isArray(y)) y = y[0];
+    y = y.reshape([y.shape[y.shape.length-1]]);
+    const probs = await y.data();
+    y.dispose(); input.dispose();
+    renderPreds(Array.from(probs));
+  }
+
+  function topK(arr, k=5){
+    return arr.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]).slice(0,k)
+      .map(([p,i])=>({index:i, prob:p, label: labels[i] ?? `Clase ${i}`}));
+  }
+  function pct(x){ return (x*100).toFixed(1) + "%"; }
+
+  function renderPreds(probs){
+    show("cardResults", true);
+    const bestIdx = probs.indexOf(Math.max(...probs));
+    const best = { index:bestIdx, prob:probs[bestIdx], label: labels[bestIdx] ?? `Clase ${bestIdx}` };
+    $("single").innerHTML = `<h3>Top‑1</h3><div class="k"><strong>${best.label}</strong><span>${pct(best.prob)}</span></div>`;
+
+    const list = topK(probs, 5);
+    const frag = document.createDocumentFragment();
+    const title = document.createElement("h3"); title.textContent = "Top‑5"; frag.appendChild(title);
+    list.forEach(it=>{
+      const row = document.createElement("div"); row.className = "k";
+      row.innerHTML = `<span>${it.label}</span><span>${pct(it.prob)}</span>`;
+      const bar = document.createElement("div"); bar.className = "bar";
+      const span = document.createElement("span"); span.style.width = Math.round(it.prob*100) + "%";
+      bar.appendChild(span);
+      frag.appendChild(row); frag.appendChild(bar);
+    });
+    const topk = $("topk"); topk.innerHTML = ""; topk.appendChild(frag);
+  }
+
+  // UI
+  $("photo").addEventListener("change", (e)=>{
+    const f = e.target.files?.[0]; if(!f) return;
+    const url = URL.createObjectURL(f); preview.src = url;
+  });
+  $("btnPredict").addEventListener("click", predict);
+
+  // Autocarga al abrir la página
+  window.addEventListener("DOMContentLoaded", autoload);
+</script>
+</body>
+</html>
