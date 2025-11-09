@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; margin: 20px; }
+main { max-width: 900px; margin: auto; }
+.row { display: flex; gap: 16px; align-items: flex-start; }
+video { width: 320px; height: 240px; background: #000; border-radius: 8px; }
+.result { margin-top: 16px; display: flex; gap: 16px; align-items: flex-start; }
+#snapshot { width: 224px; height: 224px; object-fit: contain; border: 1px solid #ddd; border-radius: 8px; }
+.controls { margin-top: 12px; display: flex; gap: 8px; }
+button { padding: 10px 14px; border-radius: 8px; border: 1px solid #ccc; cursor: pointer; }
