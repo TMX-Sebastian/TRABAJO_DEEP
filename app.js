@@ -218,66 +218,52 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
 
   const inputName = ingModel.inputs[0].name;
   let out = await ingModel.executeAsync({ [inputName]: inputTensor });
-  let y = Array.isArray(out) ? out[0] : out; // normalmente [1, C, N] o [1, N, C]
+  let y = Array.isArray(out) ? out[0] : out; // [1, C, N] o [1, N, C]
 
-  // Si la forma es [1, C, N], la transponemos a [1, N, C]
+  // Si viene como [1, C, N], la pasamos a [1, N, C]
   if (y.shape.length === 3 && y.shape[1] < y.shape[2]) {
     y = y.transpose([0, 2, 1]);
   }
 
-  const [batch, num, depth] = y.shape; // [1, N, 4+1+numClases]
+  const [batch, num, depth] = y.shape; // [1, N, 4 + numClases]
   const data = await y.data();
 
   const boxes = [];
 
-  // Escala de 640x640 (input del modelo) al tamaño real del canvas
+  // Escala de 640x640 (input modelo) → tamaño real canvas
   const scaleX = origWidth  / ING_IMG_SIZE;
   const scaleY = origHeight / ING_IMG_SIZE;
 
   for (let i = 0; i < num; i++) {
     const base = i * depth;
 
-    const cxLogit  = data[base + 0];
-    const cyLogit  = data[base + 1];
-    const wLogit   = data[base + 2];
-    const hLogit   = data[base + 3];
-    const objLogit = data[base + 4];
+    // 4 primeras posiciones: cx, cy, w, h
+    const cxVal = data[base + 0];
+    const cyVal = data[base + 1];
+    const wVal  = Math.abs(data[base + 2]);
+    const hVal  = Math.abs(data[base + 3]);
 
-    // Confianza del objeto
-    const objConf = sigmoid(objLogit);
-
-    // 1) filtro suave de objeto
-    if (objConf < YOLO_OBJ_THRESHOLD) continue;
-
-    // Buscar mejor clase para esta caja
+    // A partir del índice 4 vienen directamente los logits de clases
     let bestClass = -1;
     let bestScore = 0;
 
-    for (let c = 5; c < depth; c++) {
+    for (let c = 4; c < depth; c++) {
       const clsLogit = data[base + c];
-      const clsProb  = sigmoid(clsLogit);    // 0–1
-      const score    = objConf * clsProb;    // 0–1
+      const clsProb  = sigmoid(clsLogit);   // 0–1
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestClass = c - 5;
+      if (clsProb > bestScore) {
+        bestScore = clsProb;
+        bestClass = c - 4;   // 👈 AHORA SÍ: clase 0 = posición 4
       }
     }
 
-    // 2) filtro de score final (obj * clase)
     if (bestClass < 0 || bestScore < YOLO_SCORE_THRESHOLD) continue;
 
-    // Coordenadas en el espacio 640x640 del modelo
-    const cx = cxLogit;
-    const cy = cyLogit;
-    const w  = Math.abs(wLogit);
-    const h  = Math.abs(hLogit);
-
-    // Reescalar a tamaño real del canvas
-    const xCenter = cx * scaleX;
-    const yCenter = cy * scaleY;
-    const bw = w * scaleX;
-    const bh = h * scaleY;
+    // Reescalar coordenadas al tamaño del canvas
+    const xCenter = cxVal * scaleX;
+    const yCenter = cyVal * scaleY;
+    const bw = wVal * scaleX;
+    const bh = hVal * scaleY;
 
     const x1 = xCenter - bw / 2;
     const y1 = yCenter - bh / 2;
@@ -291,19 +277,19 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
     });
   }
 
-  // NMS y limitar número de cajas mostradas
+  // NMS + top N cajas
   const finalBoxes = nonMaxSuppression(boxes);
   finalBoxes.sort((a, b) => b.score - a.score);
   const shownBoxes = finalBoxes.slice(0, YOLO_MAX_BOXES);
 
-  // Redibujar la imagen base antes de pintar cajas
+  // Redibujar imagen base
   snapshotCtx.drawImage(videoElement, 0, 0, origWidth, origHeight);
 
   snapshotCtx.lineWidth = 2;
   snapshotCtx.font = "13px system-ui";
   snapshotCtx.textBaseline = "top";
 
-  // Dibujar cada caja seleccionada
+  // Dibujar cajas
   shownBoxes.forEach(b => {
     const label = ingredientClasses[b.classId] ?? `cls ${b.classId}`;
     const pct   = (b.score * 100).toFixed(1);
@@ -311,11 +297,9 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
     const boxW = b.x2 - b.x1;
     const boxH = b.y2 - b.y1;
 
-    // rectángulo
     snapshotCtx.strokeStyle = "#22c55e";
     snapshotCtx.strokeRect(b.x1, b.y1, boxW, boxH);
 
-    // fondo del texto
     const text  = `${label} ${pct}%`;
     const pad   = 2;
     const m     = snapshotCtx.measureText(text);
@@ -325,12 +309,11 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
     snapshotCtx.fillStyle = "rgba(15,23,42,0.85)";
     snapshotCtx.fillRect(b.x1, b.y1 - textH, textW, textH);
 
-    // texto
     snapshotCtx.fillStyle = "#e5e7eb";
     snapshotCtx.fillText(text, b.x1 + pad, b.y1 - textH + 2);
   });
 
-  // Actualizar lista textual debajo del canvas
+  // Lista textual debajo del canvas
   const listDiv = document.getElementById("ingredientsList");
   if (!shownBoxes.length) {
     listDiv.classList.add("muted");
@@ -348,7 +331,6 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
 
   if (Array.isArray(out)) out.forEach(t => t.dispose()); else out.dispose();
 }
-
 
 // ----------------------------
 // Predicción conjunta
@@ -431,3 +413,4 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 });
+
