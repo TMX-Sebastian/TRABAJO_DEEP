@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <!-- Siempre arriba -->
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Platos e ingredientes – TensorFlow.js</title>
+
+  <!-- TF.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <!-- Tu app -->
+  <script defer src="app.js"></script>
+
+  <style>
+    :root {
+      --accent: #4caf50;
+      --accent-hover: #45a049;
+      --bg: #0f172a;
+      --card-bg: #0b1120;
+      --border-subtle: #1e293b;
+      --text-main: #e5e7eb;
+      --text-muted: #9ca3af;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: radial-gradient(circle at top, #1d283a 0, #020617 60%);
+      color: var(--text-main);
+      display: flex;
+      justify-content: center;
+    }
+
+    .app {
+      width: 100%;
+      max-width: 960px;
+    }
+
+    .app-header {
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .app-header h1 {
+      font-size: 1.4rem;
+      margin: 0 0 4px;
+    }
+
+    .app-header p {
+      margin: 0;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .main-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 18px 30px rgba(15,23,42,0.85);
+      padding: 14px 14px 16px;
+    }
+
+    .card h2 {
+      font-size: 1rem;
+      margin: 0 0 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .camera-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid #111827;
+    }
+
+    video {
+      width: 100%;
+      display: block;
+      background: #000;
+      object-fit: cover;
+      aspect-ratio: 4 / 3;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 9px 16px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 8px 18px rgba(34,197,94,0.35);
+      transition: transform .12s ease, box-shadow .12s ease, background .15s;
+    }
+
+    button:active {
+      transform: translateY(1px) scale(.99);
+      box-shadow: 0 4px 10px rgba(34,197,94,0.28);
+    }
+
+    button:hover {
+      background: var(--accent-hover);
+    }
+
+    .switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .switch input {
+      transform: scale(1.1);
+      accent-color: var(--accent);
+    }
+
+    .results-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .results-row {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .result-content {
+      font-size: 0.9rem;
+    }
+
+    .pred-item {
+      background: #020617;
+      border-radius: 10px;
+      padding: 6px 10px;
+      margin-top: 4px;
+      border: 1px solid #1e293b;
+      font-size: 0.9rem;
+    }
+
+    .muted {
+      color: var(--text-muted);
+      font-size: 0.86rem;
+    }
+
+    .ingredients-visual {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+    }
+
+    #snapshotCanvas {
+      width: 100%;
+      max-width: 420px;
+      background: #020617;
+      border-radius: 12px;
+      border: 1px solid #111827;
+    }
+
+    #ingredientsList {
+      width: 100%;
+      max-width: 420px;
+      font-size: 0.85rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(148,163,184,0.14);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      border: 1px solid rgba(148,163,184,0.25);
+    }
+
+    .error-text {
+      color: var(--danger);
+    }
+
+    @media (min-width: 768px) {
+      .main-layout {
+        flex-direction: row;
+        align-items: flex-start;
+      }
+
+      .camera-card {
+        flex: 1.1;
+      }
+
+      .results-layout {
+        flex: 1;
+      }
+
+      .results-row {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <h1>🍽️ Platos e ingredientes</h1>
+      <p>Usa la cámara para clasificar el plato y detectar sus ingredientes.</p>
+    </header>
+
+    <section class="main-layout">
+      <!-- Cámara -->
+      <section class="card camera-card">
+        <h2>📷 Cámara</h2>
+        <div class="video-wrapper">
+          <video id="video" autoplay playsinline muted></video>
+        </div>
+
+        <div class="controls">
+          <button id="predictBtn">
+            📸 Tomar foto y predecir
+          </button>
+          <button id="switchBtn">
+            🔄 Cambiar cámara
+          </button>
+        </div>
+
+        <label class="switch">
+          <input type="checkbox" id="toggleTop" />
+          <span id="topLabel">Top-1 plato</span>
+        </label>
+      </section>
+
+      <!-- Resultados -->
+      <section class="results-layout">
+
+        <div class="results-row">
+          <article class="card">
+            <h2>🍽️ Plato detectado <span class="badge">clasificador</span></h2>
+            <div id="plateResult" class="result-content muted">
+              Esperando captura…
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>🥦 Ingredientes detectados <span class="badge">YOLOv11</span></h2>
+            <div class="ingredients-visual">
+              <canvas id="snapshotCanvas"></canvas>
+              <div id="ingredientsList" class="muted">
+                Aún no se han detectado ingredientes.
+              </div>
+            </div>
+          </article>
+        </div>
+
+      </section>
+    </section>
+  </main>
+</body>
+</html>

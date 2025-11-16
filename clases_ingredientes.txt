@@ -1,0 +1,16 @@
+aceituna
+arroz
+camote
+carne
+cebolla
+chancho
+choclo
+huevo
+lechuga
+papa
+papa_frita
+pasta
+pescado
+pollo
+tomate
+zanahoria
