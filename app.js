@@ -6,7 +6,11 @@ const PLATE_MODEL_PATH = "tfjs_models/clasificador_platos/model.json";
 const ING_MODEL_PATH   = "tfjs_models/segmentador_ingredientes/model.json";
 
 const PLATE_IMG_SIZE = 224;
-const ING_IMG_SIZE   = 640;   // input típico de YOLO
+const ING_IMG_SIZE        = 640;
+const YOLO_OBJ_THRESHOLD  = 0.10;  
+const YOLO_SCORE_THRESHOLD = 0.20; 
+const YOLO_MAX_BOXES      = 7;    
+
 const NORMALIZE_DIV255 = true;
 
 let plateModel;
@@ -214,42 +218,45 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
 
   const inputName = ingModel.inputs[0].name;
   let out = await ingModel.executeAsync({ [inputName]: inputTensor });
-  let y = Array.isArray(out) ? out[0] : out; // normalmente [1, C, N]
+  let y = Array.isArray(out) ? out[0] : out; // normalmente [1, C, N] o [1, N, C]
 
-  // Si la forma es [1, C, N], la transponemos a [1, N, C] para tratar "N detecciones, C features"
+  // Si la forma es [1, C, N], la transponemos a [1, N, C]
   if (y.shape.length === 3 && y.shape[1] < y.shape[2]) {
-    // [1, C, N] -> [1, N, C]
     y = y.transpose([0, 2, 1]);
   }
 
   const [batch, num, depth] = y.shape; // [1, N, 4+1+numClases]
   const data = await y.data();
 
-  const confThreshold = 0.35;
   const boxes = [];
+
+  // Escala de 640x640 (input del modelo) al tamaño real del canvas
+  const scaleX = origWidth  / ING_IMG_SIZE;
+  const scaleY = origHeight / ING_IMG_SIZE;
 
   for (let i = 0; i < num; i++) {
     const base = i * depth;
 
-    const cxLogit = data[base + 0];
-    const cyLogit = data[base + 1];
-    const wLogit  = data[base + 2];
-    const hLogit  = data[base + 3];
+    const cxLogit  = data[base + 0];
+    const cyLogit  = data[base + 1];
+    const wLogit   = data[base + 2];
+    const hLogit   = data[base + 3];
     const objLogit = data[base + 4];
 
-    // en muchos exports, las coords ya vienen en rango 0–1 o similar,
-    // pero objeto y clases suelen estar en logits → aplicamos sigmoid
+    // Confianza del objeto
     const objConf = sigmoid(objLogit);
 
-    if (objConf < confThreshold * 0.5) continue;
+    // 1) filtro suave de objeto
+    if (objConf < YOLO_OBJ_THRESHOLD) continue;
 
+    // Buscar mejor clase para esta caja
     let bestClass = -1;
     let bestScore = 0;
 
     for (let c = 5; c < depth; c++) {
       const clsLogit = data[base + c];
-      const clsProb = sigmoid(clsLogit);
-      const score = objConf * clsProb; // 0–1
+      const clsProb  = sigmoid(clsLogit);    // 0–1
+      const score    = objConf * clsProb;    // 0–1
 
       if (score > bestScore) {
         bestScore = score;
@@ -257,23 +264,20 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
       }
     }
 
-    if (bestScore < confThreshold || bestClass < 0) continue;
+    // 2) filtro de score final (obj * clase)
+    if (bestClass < 0 || bestScore < YOLO_SCORE_THRESHOLD) continue;
 
-    // ✅ NUEVO: interpretar coords en espacio 640x640 y reescalar al canvas
-    const scaleX = origWidth  / ING_IMG_SIZE;
-    const scaleY = origHeight / ING_IMG_SIZE;
-
-    // asumimos que cx,cy,w,h ya vienen en pixeles 0..640
+    // Coordenadas en el espacio 640x640 del modelo
     const cx = cxLogit;
     const cy = cyLogit;
     const w  = Math.abs(wLogit);
     const h  = Math.abs(hLogit);
 
+    // Reescalar a tamaño real del canvas
     const xCenter = cx * scaleX;
     const yCenter = cy * scaleY;
     const bw = w * scaleX;
     const bh = h * scaleY;
-
 
     const x1 = xCenter - bw / 2;
     const y1 = yCenter - bh / 2;
@@ -287,47 +291,53 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
     });
   }
 
+  // NMS y limitar número de cajas mostradas
   const finalBoxes = nonMaxSuppression(boxes);
+  finalBoxes.sort((a, b) => b.score - a.score);
+  const shownBoxes = finalBoxes.slice(0, YOLO_MAX_BOXES);
 
-  // Dibujar sobre snapshotCanvas
+  // Redibujar la imagen base antes de pintar cajas
+  snapshotCtx.drawImage(videoElement, 0, 0, origWidth, origHeight);
+
   snapshotCtx.lineWidth = 2;
   snapshotCtx.font = "13px system-ui";
   snapshotCtx.textBaseline = "top";
 
-  // primero volvemos a dibujar la imagen base (por si había cajas viejas)
-  snapshotCtx.drawImage(videoElement, 0, 0, origWidth, origHeight);
-
-  finalBoxes.forEach(b => {
+  // Dibujar cada caja seleccionada
+  shownBoxes.forEach(b => {
     const label = ingredientClasses[b.classId] ?? `cls ${b.classId}`;
     const pct   = (b.score * 100).toFixed(1);
 
     const boxW = b.x2 - b.x1;
     const boxH = b.y2 - b.y1;
 
+    // rectángulo
     snapshotCtx.strokeStyle = "#22c55e";
     snapshotCtx.strokeRect(b.x1, b.y1, boxW, boxH);
 
-    const text = `${label} ${pct}%`;
-    const padding = 2;
-    const metrics = snapshotCtx.measureText(text);
-    const textW = metrics.width + padding * 2;
+    // fondo del texto
+    const text  = `${label} ${pct}%`;
+    const pad   = 2;
+    const m     = snapshotCtx.measureText(text);
+    const textW = m.width + pad * 2;
     const textH = 16;
 
     snapshotCtx.fillStyle = "rgba(15,23,42,0.85)";
     snapshotCtx.fillRect(b.x1, b.y1 - textH, textW, textH);
 
+    // texto
     snapshotCtx.fillStyle = "#e5e7eb";
-    snapshotCtx.fillText(text, b.x1 + padding, b.y1 - textH + 2);
+    snapshotCtx.fillText(text, b.x1 + pad, b.y1 - textH + 2);
   });
 
+  // Actualizar lista textual debajo del canvas
   const listDiv = document.getElementById("ingredientsList");
-  if (!finalBoxes.length) {
+  if (!shownBoxes.length) {
     listDiv.classList.add("muted");
     listDiv.textContent = "No se detectaron ingredientes con confianza suficiente.";
   } else {
     listDiv.classList.remove("muted");
-    listDiv.innerHTML = finalBoxes
-      .sort((a, b) => b.score - a.score)
+    listDiv.innerHTML = shownBoxes
       .map(b => {
         const name = ingredientClasses[b.classId] ?? `cls ${b.classId}`;
         const pct  = (b.score * 100).toFixed(1);
@@ -338,6 +348,7 @@ async function runIngredientsDetection(inputTensor, origWidth, origHeight) {
 
   if (Array.isArray(out)) out.forEach(t => t.dispose()); else out.dispose();
 }
+
 
 // ----------------------------
 // Predicción conjunta
